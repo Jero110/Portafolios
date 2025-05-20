@@ -8,6 +8,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 import warnings
 from features import extract_features
 from datetime import datetime
+from portfolio_visualization import analyze_portfolio_results
 
 warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
 warnings.filterwarnings("ignore", message="You provided an OpenAI Gym environment")
@@ -80,6 +81,7 @@ class PortfolioEnv(gym.Env):
         arrs = []
         for t in self.tickers:
             vals = self.returns[t].loc[start:date].values
+            assert all(self.returns[t].loc[:date].index <= date), "❌ Future returns detected in observation!"
             if len(vals) < self.window_size:
                 vals = np.pad(vals, (self.window_size - len(vals), 0))
             arrs.append(vals[-self.window_size:])
@@ -161,12 +163,12 @@ if __name__ == "__main__":
     global_end      = "2024-04-30"  # Fecha de fin global
     initial_train_days = 30         # Días iniciales para entrenamiento
     test_days       = 10            # Días para prueba en cada iteración
-    window_size     = 20            # Ventana para calcular métricas
+    window_size     = 10            # Ventana para calcular métricas
     lambda_param    = 1.0           # Peso del CVaR en la función objetivo
     diversity_coeff = 0.2           # Peso de la diversificación
     max_adjust      = 0.05          # Límite de ajuste por activo
     walk_iterations = 10            # Número de ventanas de tiempo a evaluar
-    iter_per_window = 50            # Número de iteraciones por ventana (nuevo parámetro)
+    iter_per_window = 5            # Número de iteraciones por ventana (nuevo parámetro)
 
     # Timesteps para entrenamiento
     pretrain_timesteps = 500        # Entrenamiento inicial
@@ -219,6 +221,8 @@ if __name__ == "__main__":
         test_start_date = all_dates[test_start_idx]
         test_end_date = all_dates[test_end_idx]
         
+        assert train_end_date < test_start_date, "❌ Train period overlaps with test period — Data Leakage Risk!"
+
         # Mostrar ventana de tiempo actual
         total_train_days = current_train_end_idx + 1
         print(f"Ventana {window+1} de {walk_iterations}:")
@@ -226,8 +230,15 @@ if __name__ == "__main__":
         
         # Crear ambiente de entrenamiento para esta ventana
         try:
-            # Descargar precios hasta train_end_date
-            feature_prices = yf.download(tickers, start=global_start, end=train_end_date, auto_adjust=True, progress=False)["Close"]
+            feature_prices = yf.download(
+                tickers,
+                start=global_start,
+                end=train_end_date + pd.Timedelta(days=1),  # Ensure train_end_date is included
+                auto_adjust=True,
+                progress=False
+            )["Close"]
+
+            assert feature_prices.index.max() <= train_end_date, "❌ Feature prices include future data!"
             static_feats = extract_features(feature_prices)
 
             # Crear entorno con features
@@ -452,3 +463,32 @@ if __name__ == "__main__":
         print(f"Rendimiento promedio: {avg_return:.2%}")
         print(f"Desviación estándar: {std_return:.2%}")
         print(f"Ratio positivo/negativo: {pos_returns}/{neg_returns} ({pos_returns/len(total_returns):.2%})")
+    
+    # Add this at the very end of model.py, after the existing summary statistics
+
+    # ===== NEW CODE: VISUALIZATION =====
+    # Import and run visualization analysis
+    try:
+        from portfolio_visualization import analyze_portfolio_results
+        
+        print("\n" + "="*60)
+        print("GENERANDO VISUALIZACIONES DEL MODELO")
+        print("="*60)
+        
+        # Run the comprehensive analysis
+        analyzer = analyze_portfolio_results(window_results, tickers)
+        
+        # Optionally save results to CSV for further analysis
+        if hasattr(analyzer, 'df_results'):
+            analyzer.df_results.to_csv('portfolio_results.csv', index=False)
+            print(f"\nResultados guardados en 'portfolio_results.csv'")
+            
+    except ImportError:
+        print("\nNo se pudo importar portfolio_visualization.py")
+        print("Asegúrate de que el archivo esté en el mismo directorio.")
+    except Exception as e:
+        print(f"\nError al generar visualizaciones: {e}")
+    
+    print("\n" + "="*60)
+    print("ANÁLISIS COMPLETO")
+    print("="*60)

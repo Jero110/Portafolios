@@ -37,7 +37,8 @@ def extract_features(data):
         acf1 = acf_values[1]  # Autocorrelación con lag 1
         
         # Volatilidad
-        rolling_std_30 = series.rolling(window=30).std().mean()
+        rolling_std_30 = series.expanding().apply(lambda x: x[-30:].std() if len(x) >= 30 else np.nan).iloc[-1]
+
         
         # Tendencia - pendiente de la línea de tendencia
         x = np.arange(len(series))
